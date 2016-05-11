@@ -151,7 +151,7 @@ for( sim in 1:sims ) {
          }
 	}
 
-  pred.sim = predict( fit , newx = x.sim , type="link" ) 
+  pred.sim = predict( fit , newx = x.sim , type="response" , s = fit$lambda.1se ) 
   fit.scores = lm( pred.sim ~ geno.sim * treatment )
   sim.pvals[i,sim] = drop1( fit.scores , ~. , test="F" )[ 4 , 'Pr(>F)' ]
  
