@@ -1,0 +1,9 @@
+Package: hdendpoints
+Title: Power Analysis for HD Molecular Endpoints in HD
+Version: 0.01
+Date: 2016-5-9
+Author: Seth Ament, Jeff Carroll
+Maintainer: Seth Ament <seth.ament@gmail.com>
+Description: Conduct power analysis for molecular endpoints (qPCR and IHC) for potential use in pre-clinical therapeutics studies of Huntington's disease.
+Requires: doBy, dplyr
+License: GPL-2
