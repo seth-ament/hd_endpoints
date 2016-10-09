@@ -5,7 +5,9 @@
 require( hdendpoints )
 require( glmnet )
 require( impute )
+require( MASS )
 
+data(endpoint_data)
 data = endpoint_data
 
 # find a subset of mice and phenotypes with mostly complete data
@@ -13,16 +15,25 @@ data = endpoint_data
 drop.measure = which( colSums(is.na(data$measure)) > 70 )
 drop.mouse = which( rowSums(is.na(data$measure)) > 3 )
 x0 = as.matrix( data$measure[ -drop.mouse , -drop.measure ] )
+# drop measures from peripheral tissue
+drop = which( colnames(x0) %in% c("Abhd1","Insig2","Islr2","H60b","N4bp2") )
+x0 = x0[,-drop]
+
 
 # the resulting predictors and response variables are 
 measure = impute.knn( x0 , k = 3 )$data
 pheno = data$row_metadata[ -drop.mouse , ]
 age = data$row_metadata$age[ -drop.mouse ]
 
+measure.mean = colMeans( measure )
+measure.sd = apply( measure , 2 , sd )
+norm = t( ( t(measure) - measure.mean ) / measure.sd )
+
+measure = norm
 
 # 2. now, construct multivariate classifiers by penalized logistic regression (elastic net)
 
-
+x = measure
 target.ages = c(3,9,12)
 classification = list()
 beta.coefficients = matrix( NA , ncol = 3 , nrow = ncol(x) + 1 )
@@ -37,8 +48,8 @@ x = measure[ age == target.age , ]
 
 # training set performance
 fit.full = cv.glmnet( x = x , y = y , family = "binomial" , alpha = 0.5 , nfolds = 5 ) 
-pred.response.train = predict( fit.full , newx = x , type = "response" , s = fit.full$lambda.1se )[,1]
-beta.coefficients[,a] = as.matrix(coef(fit.full))[,1]
+pred.response.train = predict( fit.full , newx = x , type = "response" , s = fit.full$lambda.min )[,1]
+beta.coefficients[,a] = as.matrix( predict( fit.full , newx = x , type = "coef" , s = fit.full$lambda.min ) )
 
 # evaluate test set performance (leave-one-out cross-validation)
 pred.class = rep( NA , length(y) )
@@ -54,10 +65,10 @@ for( i in 1:length(y) ) {
 	y = ytrain , 
 	family = "binomial" , 
 	alpha = 0.5 , 
-	nfolds = 5 )
-  pred.class[i] = predict( fit , newx = xtest , s = fit$lambda.1se , type = "class" )
-  pred.link[i] = predict( fit , newx = xtest , s = fit$lambda.1se , type = "link" )
-  pred.response[i] = predict( fit , newx = xtest  , s = fit$lambda.1se , type = "response" )
+	nfolds = length(ytrain) )
+  pred.class[i] = predict( fit , newx = xtest , s = 0.1 , type = "class" )
+  pred.link[i] = predict( fit , newx = xtest , s = 0.1 , type = "link" )
+  pred.response[i] = predict( fit , newx = xtest  , s = 0.1 , type = "response" )
 }
 
 res = data.frame( pheno[ age == target.age , ] , pred.class , pred.link , pred.response , pred.response.train )
@@ -151,7 +162,7 @@ for( sim in 1:sims ) {
          }
 	}
 
-  pred.sim = predict( fit , newx = x.sim , type="response" , s = fit$lambda.1se ) 
+  pred.sim = predict( fit , newx = x.sim , type="response" , s = fit$lambda.min ) 
   fit.scores = lm( pred.sim ~ geno.sim * treatment )
   sim.pvals[i,sim] = drop1( fit.scores , ~. , test="F" )[ 4 , 'Pr(>F)' ]
  
@@ -189,13 +200,13 @@ for( i in 1:3 ) {
 }
 names(simulation_results2) = c("n10","n20","n30")
 
-save( simulation_results2 , file="simulation_results.elastic_net.RData")
+save( simulation_results2 , file="simulation_results.elastic_net_noliver_2016-10-8.RData")
 
 # plot the power to detect an interaction effect for each gene at each time point (qPCR)
 
-pdf("power.multivariate_endpoint.pdf")
 for( n in c("n10","n20","n30") ) {
-  par( bty = "l" )
+  png(paste("power.multivariate_endpoint",n,"png",sep="."))
+  par( bty = "l" , cex.axis = 2 , cex = 1 , mar=c(5,5,3,1) )
   # plot 12-month data
   y = simulation_results2[[n]]$'12m'$power
   plot( x = c(0,length(y)) ,
@@ -216,19 +227,63 @@ for( n in c("n10","n20","n30") ) {
   lines( smooth.spline(  x = 1:length(y) , y = y , spar = 0.2 , nknots = 15 ) , col = "red" )
 
   abline( h = 0.8 , lty = 2 )
-  mtext( side = 1 , line = 2.5 , "Percent Rescue" )
-  mtext( side = 2 , line = 2.5 , "Power (alpha = 0.05)" )
-  mtext( side = 3 , line = 0.5 , adj = 0 , font = 2 , 
-	paste( "elastic net," , n ) )
+  mtext( side = 1 , line = 3.5 ,  cex = 2 , "Percent Rescue" )
+  mtext( side = 2 , line = 3.5 , cex = 2 , "Power (alpha = 0.05)" )
+  mtext( side = 3 , line = 0.5 , cex = 2 , adj = 0 , font = 2 , 
+  	paste( "n =" , gsub("n","",n) ) )
 
-  legend( x = 1 , y = 1 ,
+  if( n ==  "n10" ) 
+     legend( x = 65 , y = 0.3 ,
         legend = c("12m","9m","3m") ,
         col = c("black","blue","red") ,
         pch = c( 1 , 22 , 25 ) ,
         lty = 1 ,
-        bty = "n" )
+        bty = "n" , cex = 2 )
+
+  dev.off()
+}
+
+# plot the beta coefficients for the classifier
+
+vars = c("Intercept","Drd1a mRNA (striatum)","Drd2 mRNA (striatum)",
+   "Darpp2 mRNA (striatum)","Scn4b mRNA (striatum)",
+   "Cnr1 mRNA (striatum)","Homer1 mRNA (striatum)",
+   "Cell Ratio (striatum)","Cell Total (striatum)",
+   "Fraction NeuN+ (striatum)","Darpp2 protein (striatum)",
+   "mHTT Aggregates (striatum, MW8)" , "mHTT Area (striatum, MW8)",
+   "mHTT Aggregates (striatum, p62)" , "mHTT Area (striatum, p62)",
+   "synaptophysin (striatum)")
+
+coef = beta.coefficients[-1,]
+rownames(coef) = vars[-1]
+
+varOrder = order( abs( rowMeans( coef) ) , decreasing = F )
+coef = coef[ varOrder , ]
+ages = c("3 months" , "9 months" , "12 months" )
+
+library( gplots )
+pdf("beta_coefficients.2016-10-8.pdf", height = 4.5 , width = 7.5 )
+par( mfrow = c(1,3) , las = 1 , cex.axis = 1.3 )
+layout( matrix( 1:3 , 1 , 3 ) , widths = c(3,1,1) )
+for ( i in 1:3 ) {
+   if( i == 1 ) par( mar = c(3,23,3,2) )
+   if( i > 1 ) par( mar = c(3,1,3,2) )
+   if( i == 1 ) names = rownames(coef)
+   if( i > 1 ) names = NULL
+   barplot2( 
+      #xlim = c(-1 , 3) ,
+      height = coef[,i] , 
+      horiz = T ,
+      names.arg = names )
+   abline( v = 0 )
+   mtext( side = 3 , adj = 0.5 , line = 0.5 , ages[i] , las = 0 )
 }
 dev.off()
+
+
+
+
+
 
 
 
